@@ -39,3 +39,26 @@ def plot_eeg_signal(time, raw_signal, filtered_signal, channel_name="Channel", d
 
     plt.tight_layout()
     return fig, axes
+
+def plot_psd_comparison(freqs, raw_psd, filtered_psd, channel_idx=0, channel_name="Channel", max_freq=50.0):
+    """
+    Plots Welch Power Spectral Density (PSD) comparison between raw and filtered signals.
+    """
+    # Select target channel PSD and convert to uV^2 / Hz
+    raw_psd_ch = raw_psd[channel_idx] * 1e12
+    filt_psd_ch = filtered_psd[channel_idx] * 1e12
+    
+    fig, ax = plt.subplots(figsize=(10, 5))
+    
+    ax.semilogy(freqs, raw_psd_ch, color='#1f77b4', linewidth=1.5, label='Raw Signal')
+    ax.semilogy(freqs, filt_psd_ch, color='#2ca02c', linewidth=1.5, label='Filtered Signal (8–30 Hz)')
+    
+    ax.set_xlim(0, max_freq)
+    ax.set_title(f"Power Spectral Density (PSD) — {channel_name}", fontsize=12, fontweight='bold')
+    ax.set_xlabel("Frequency (Hz)")
+    ax.set_ylabel(r"Power ($\mu\text{V}^2$ / Hz)")
+    ax.grid(True, which="both", linestyle='--', alpha=0.5)
+    ax.legend(loc='upper right')
+    
+    plt.tight_layout()
+    return fig, ax

@@ -1,0 +1,22 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+*_env/
+
+# Data and Cache directories (Keep repo lightweight)
+data/
+mne_data/
+*.edf
+*.fif
+*.npz
+
+# Jupyter Notebook checkpoints & VS Code metadata
+.ipynb_checkpoints
+.vscode/
+.DS_Store

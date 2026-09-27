@@ -5,6 +5,7 @@ import numpy as np
 import mne
 from src.preprocessing import fit_ica, apply_ica_cleaning
 from src.features import create_motor_epochs, extract_band_powers
+from src.features import evaluate_motor_imagery_classifier
 
 @pytest.fixture
 def dummy_raw():
@@ -38,13 +39,13 @@ def dummy_annotated_raw():
     """Creates synthetic Raw EEG data containing dummy event annotations."""
     ch_names = [f"EEG {i:03d}" for i in range(1, 65)]
     info = mne.create_info(ch_names=ch_names, sfreq=160, ch_types="eeg")
-    data = np.random.randn(64, 160 * 10)  # 10 seconds
+    data = np.random.randn(64, 160 * 20)  # 20 seconds
     raw = mne.io.RawArray(data, info)
     
-    # Add annotations mimicking PhysioNet motor events
-    onset = [1.0, 4.0, 7.0]
-    duration = [2.0, 2.0, 2.0]
-    description = ['T1', 'T2', 'T1']
+    # 6 alternating events (3 for T1, 3 for T2)
+    onset = [1.0, 4.0, 7.0, 10.0, 13.0, 16.0]
+    duration = [2.0] * 6
+    description = ['T1', 'T2', 'T1', 'T2', 'T1', 'T2']
     annotations = mne.Annotations(onset, duration, description)
     raw.set_annotations(annotations)
     return raw
@@ -52,7 +53,7 @@ def dummy_annotated_raw():
 def test_create_motor_epochs(dummy_annotated_raw):
     """Verifies epoch creation returns the expected number of trials."""
     epochs = create_motor_epochs(dummy_annotated_raw, tmin=-0.5, tmax=1.0)
-    assert len(epochs) == 3, f"Expected 3 epochs, got {len(epochs)}"
+    assert len(epochs) == 6, f"Expected 6 epochs, got {len(epochs)}"
 
 def test_extract_band_powers_dataframe(dummy_annotated_raw):
     """Verifies PSD extraction returns correct DataFrame dimensions."""
@@ -60,5 +61,17 @@ def test_extract_band_powers_dataframe(dummy_annotated_raw):
     df_psd = extract_band_powers(epochs, fmin=8.0, fmax=30.0)
     
     # Check that rows match epoch count and columns match channels + condition
-    assert len(df_psd) == 3, "DataFrame row count does not match epoch count!"
+    assert len(df_psd) == 6, "DataFrame row count does not match epoch count!"
     assert 'condition' in df_psd.columns, "'condition' column missing from output!"
+
+def test_evaluate_motor_imagery_classifier(dummy_annotated_raw):
+    """ Verifies that the CSP and logistic regression pipeline returns cross-validation scores."""
+    epochs = create_motor_epochs(dummy_annotated_raw, tmin=-0.5, tmax=1.0)
+    scores, model = evaluate_motor_imagery_classifier(
+        epochs, n_components=2, cv_folds=2
+    )
+
+    assert len(scores) == 2, "Expected 2 cross-validation scores"
+    assert (
+        0.0 <= scores.mean() <= 1.0
+    ), "Accuracy score out of valid probability range [0, 1]"

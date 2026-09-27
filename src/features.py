@@ -7,6 +7,10 @@ import numpy as np
 from scipy.signal import welch
 import mne
 import pandas as pd
+from mne.decoding import CSP
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import make_pipeline
+from sklearn.model_selection import cross_val_score, StratifiedKFold
 
 def compute_psd(data, fs=160.0, nperseg=None):
     # nperseg=None -> int(2*fs) = 320 samples (2 seconds of data at 160 Hz) a clean frequency resolution for frequency bands to fall on exacct integer bins
@@ -109,3 +113,39 @@ def extract_band_powers(epochs, fmin=8.0, fmax=30.0):
     df['condition'] = epochs.events[:, -1]
     
     return df
+
+def evaluate_motor_imagery_classifier(epochs, n_components=4, cv_folds=5):
+    """
+    Trains and evaluates a CSP and Logistic Regression pipeline using cross-validation.
+    
+    Parameters:
+    -----------
+    epochs : mne.Epochs
+        Epoched motor imagery data.
+    n_components : int
+        Number of spatial patterns to extract with CSP.
+    cv_folds : int
+        Number of stratified cross-validation splits.
+    
+    Returns:
+    --------
+    scores : numpy.darray
+        Classification accuracy scores across cross-validation folds.
+    pipeline : sklearn.pipeline.Pipeline
+        Fitted CSP + Logistic Regression pipeline.
+    """
+    # 1. extract raw data matrix X and labels y
+    X = epochs.get_data(copy=True)  # Shape: (n_epochs, n_channels, n_times)
+    y = epochs.events[:, -1]
+
+    # 2. build CSP + Logistic Regression pipeline
+    csp = CSP(n_components=n_components, reg=None, log=True, norm_trace=False)
+    clf = make_pipeline(csp, LogisticRegression(solver='liblinear', random_state=42))
+
+    # 3. stratified K-fold cross-validation
+    cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+    scores = cross_val_score(clf, X, y, cv=cv, scoring="accuracy")
+
+    # 4. fit final model on all epochs
+    clf.fit(X, y)
+    return scores, clf

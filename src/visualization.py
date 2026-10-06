@@ -62,3 +62,46 @@ def plot_psd_comparison(freqs, raw_psd, filtered_psd, channel_idx=0, channel_nam
     
     plt.tight_layout()
     return fig, ax
+
+def plot_loso_benchmark(subject_scores):
+    """Plots cross-subject generalization accuracy against chance level baseline"""
+    fig, ax = plt.subplots(figsize=(10, 5))
+
+    # convert subject IDs and accuracies (scaled to percentage 0-100%)
+    subjects = [f"Sub {s}" for s in subject_scores.keys()]
+    accuracies = np.array(list(subject_scores.values())) * 100
+    mean_acc = np.mean(accuracies)
+
+    # Plot subject-specific scores
+    ax.bar(subjects, accuracies, color="#3498db", edgecolor="black")
+
+    # Add reference lines (Chance Level & Mean Population Accuracy)
+    ax.axhline(
+        50,
+        color="red",
+        linestyle="--",
+        linewidth=1.5,
+        label="Chance Level (50%)",
+    )
+    ax.axhline(
+        mean_acc,
+        color="green",
+        linestyle="-",
+        linewidth=2,
+        label=f"Mean LOSO Accuracy ({mean_acc:.1f}%)",
+    )
+
+    # Styling
+    ax.set_ylim(0, 100)
+    ax.set_ylabel("Accuracy (%)")
+    ax.set_xlabel("Subject ID")
+    ax.set_title(
+        "Leave-One-Subject-Out (LOSO) Cross-Validation Accuracy",
+        fontsize=12,
+        fontweight="bold",
+    )
+    ax.grid(axis="y", linestyle=":", alpha=0.6)
+    ax.legend(loc="lower right")
+
+    plt.tight_layout()
+    return fig, ax

@@ -10,7 +10,8 @@ import pandas as pd
 from mne.decoding import CSP
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import make_pipeline
-from sklearn.model_selection import cross_val_score, StratifiedKFold
+from sklearn.model_selection import cross_val_score, StratifiedKFold, LeaveOneGroupOut
+from src.preprocessing import fit_ica, apply_ica_cleaning
 
 def compute_psd(data, fs=160.0, nperseg=None):
     # nperseg=None -> int(2*fs) = 320 samples (2 seconds of data at 160 Hz) a clean frequency resolution for frequency bands to fall on exacct integer bins
@@ -149,3 +150,100 @@ def evaluate_motor_imagery_classifier(epochs, n_components=4, cv_folds=5):
     # 4. fit final model on all epochs
     clf.fit(X, y)
     return scores, clf
+
+def load_multi_subject_data(subject_ids, runs=[4, 8, 12]):
+    """Loads, cleans, and epochs data for multiple PhysioNet subjects silently."""
+    X_list, y_list, group_list = [], [], []
+
+    # MNE verbosity level setting to keep notebook output clean
+    mne.set_log_level("WARNING")
+
+    for sub_id in subject_ids:
+        try:
+            raw_fnames = mne.datasets.eegbci.load_data(
+                subjects=sub_id, runs=runs, verbose=False
+            )
+            raws = [
+                mne.io.read_raw_edf(f, preload=True, verbose=False)
+                for f in raw_fnames
+            ]
+            raw = mne.concatenate_raws(raws, verbose=False)
+
+            raw.resample(sfreq=100, verbose=False)
+
+            mne.datasets.eegbci.standardize(raw)
+            montage = mne.channels.make_standard_montage("colin27_1020")
+            raw.set_montage(montage, on_missing="ignore", verbose=False)
+
+            ica = fit_ica(
+                raw, n_components=10, max_iter=500, random_state=42
+            )
+            raw_clean = apply_ica_cleaning(raw, ica, exclude_components=[0])
+
+            events, event_id = mne.events_from_annotations(
+                raw_clean, verbose=False
+            )
+            target_ids = {
+                k: v for k, v in event_id.items() if k in ["T1", "T2"]
+            }
+
+            if not target_ids:
+                continue
+
+            epochs = mne.Epochs(
+                raw_clean,
+                events,
+                event_id=target_ids,
+                tmin=-0.5,
+                tmax=1.0,
+                baseline=(-0.5, 0.0),
+                preload=True,
+                verbose=False,
+            )
+
+            X_sub = epochs.get_data(copy=True)
+            y_sub = epochs.events[:, -1]
+            groups_sub = np.full(len(y_sub), fill_value=sub_id)
+
+            X_list.append(X_sub)
+            y_list.append(y_sub)
+            group_list.append(groups_sub)
+
+        except Exception as e:
+            print(f"Skipping Subject {sub_id} due to error: {e}")
+            continue
+
+    X = np.concatenate(X_list, axis=0)
+    y = np.concatenate(y_list, axis=0)
+    groups = np.concatenate(group_list, axis=0)
+
+    return X, y, groups
+
+def evaluate_loso_cross_validation(X, y, groups, n_components=4):
+    """
+    Performs Leave-One-Subject-Out (LOSO) cross-validation for motor imagery classification.
+
+    Returns:
+    --------
+    subject_scores : dict
+        Dictionary mapping subject IDs to their accuracy scores.
+    """
+    loso = LeaveOneGroupOut()
+    csp = CSP(n_components=n_components, reg=None, log=True, norm_trace=False)
+    clf = make_pipeline(csp, LogisticRegression(solver='liblinear', random_state=42))
+
+    subject_scores = {}
+
+    for train_idx, test_idx in loso.split(X, y, groups):
+        X_train, X_test = X[train_idx], X[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
+        test_subject = groups[test_idx][0]
+
+        # Build and fit the pipeline
+        clf.fit(X_train, y_train)
+
+        # Evaluate on the left-out subject
+        score = clf.score(X_test, y_test)
+        subject_scores[test_subject] = score
+
+    return subject_scores

@@ -17,7 +17,8 @@ Models are evaluated on zero-shot cross-subject generalization (Left vs. Right H
 | :--- | :--- | :--- | :--- |
 | Chance Level (Binary) | — | — | 50.0% |
 | Regularized CSP (`ledoit_wolf`) + Logistic Regression | LOSO | 10 Subjects | 49.3% |
-| **Ledoit-Wolf Covariance + Riemannian Tangent Space + Logistic Regression** | **LOSO** | **10 Subjects** | **54.7%** |
+| Broadband Ledoit-Wolf Covariance + Riemannian Tangent Space | Run 4 (150 epochs) | LOSO (10 Subj) | 54.70% |
+| **Filter Bank ($\mu/\beta$) + Riemannian Procrustes Alignment + Tangent Space** | **Runs 4, 8, 12 (450 epochs)** | **LOSO (10 Subj)** | **58.89%** |
 
 ## Project Structure
 ```text
@@ -26,7 +27,7 @@ eeg-lfp-signal-pipeline/
 ├── docs/                   # Figures and exported visual reports
 ├── src/                    # Core modular code
 │   ├── preprocessing.py    # Standardization, Butterworth filtering, FastICA
-│   ├── features.py         # Multi-subject ingestion & Riemannian LOSO pipeline
+│   ├── features.py         # Multi-subject ingestion, Filter Bank RPA & LOSO pipelinepipeline
 │   └── visualization.py    # Signal traces, ICA topomaps, and LOSO benchmark plots
 ├── tests/                  # Automated unit tests
 │   └── test_preprocessing.py

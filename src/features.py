@@ -2,10 +2,10 @@
 # It involves dividing the signal into overlapping segments, applying a window function to each segment, 
 # computing the periodogram for each segment, and then averaging the periodograms to obtain a smoother estimate of the PSD. 
 # This method reduces the variance of the PSD estimate compared to using a single segment.
-
 import numpy as np
 from scipy.signal import welch
 import mne
+from mne.filter import filter_data
 import pandas as pd
 from mne.decoding import CSP
 from sklearn.linear_model import LogisticRegression
@@ -15,6 +15,8 @@ from src.preprocessing import fit_ica, apply_ica_cleaning
 from sklearn.preprocessing import StandardScaler
 from pyriemann.estimation import Covariances
 from pyriemann.tangentspace import TangentSpace
+from pyriemann.utils.mean import mean_riemann
+from pyriemann.utils.base import invsqrtm
 import warnings
 from sklearn.exceptions import ConvergenceWarning
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
@@ -258,5 +260,93 @@ def evaluate_loso_cross_validation(X, y, groups, n_components=4):
         # Evaluate on the left-out subject
         score = pipeline.score(X_test, y_test)
         subject_scores[test_subject] = score
+
+    return subject_scores
+
+def recenter_covariances_by_subject(covs, groups):
+    """
+    Riemannian Alignment (Re-centering):
+    Aligns each subject's covariance matrices to the Identity matrix using
+    the subject's Riemannian geometric mean (unsupervised domain adaptation).
+    """
+    aligned_covs = np.empty_like(covs)
+    for subj in np.unique(groups):
+        idx = np.where(groups == subj)[0]
+        subj_mean = mean_riemann(covs[idx])
+        inv_sqrt_mean = invsqrtm(subj_mean)
+        # Parallel transport to Identity: M^(-1/2) * C_i * M^(-1/2)
+        aligned_covs[idx] = inv_sqrt_mean @ covs[idx] @ inv_sqrt_mean
+    return aligned_covs
+
+
+def extract_filterbank_riemannian_features(X, groups, sfreq=100.0, bands=((8.0, 12.0), (13.0, 30.0))):
+    """
+    Filter Bank Riemannian Decoding with Per-Subject Re-centering:
+    1. Filters raw/broadband epochs into sub-bands (mu: 8-12 Hz, beta: 13-30 Hz).
+    2. Estimates Ledoit-Wolf regularized covariance matrices per band.
+    3. Applies Riemannian Alignment per subject to remove baseline shifts.
+    Returns aligned covariance matrices per band for leak-free TangentSpace fitting inside CV.
+    """
+    X_f64 = X.astype(np.float64)
+    band_covs = []
+    cov_estimator = Covariances(estimator="lwf")
+
+    for l_freq, h_freq in bands:
+        X_band = filter_data(
+            X_f64,
+            sfreq=sfreq,
+            l_freq=l_freq,
+            h_freq=h_freq,
+            method="iir",
+            iir_params=dict(order=4, ftype="butter"),
+            verbose=False,
+        )
+        covs = cov_estimator.fit_transform(X_band)
+        aligned_covs = recenter_covariances_by_subject(covs, groups)
+        band_covs.append(aligned_covs)
+
+    return band_covs
+
+
+def evaluate_loso_cross_validation(X, y, groups, sfreq=100.0, n_components=4):
+    """
+    Performs LOSO cross-validation using Filter Bank Riemannian Alignment
+    and Tangent Space projection across mu (8-12 Hz) and beta (13-30 Hz) bands.
+    """
+    logo = LeaveOneGroupOut()
+
+    # Precompute per-band aligned covariances (strictly unsupervised per subject)
+    band_covs = extract_filterbank_riemannian_features(
+        X, groups, sfreq=sfreq, bands=((8.0, 12.0), (13.0, 30.0))
+    )
+
+    subject_scores = {}
+
+    for train_idx, test_idx in logo.split(X, y, groups=groups):
+        y_train, y_test = y[train_idx], y[test_idx]
+        held_out_subject = groups[test_idx][0]
+
+        # Fit TangentSpace strictly on training subjects per frequency band (zero leakage)
+        X_train_feats = []
+        X_test_feats = []
+
+        for covs in band_covs:
+            ts = TangentSpace(metric="riemann")
+            X_train_feats.append(ts.fit_transform(covs[train_idx]))
+            X_test_feats.append(ts.transform(covs[test_idx]))
+
+        # Concatenate mu and beta tangent space vectors
+        X_train_concat = np.hstack(X_train_feats)
+        X_test_concat = np.hstack(X_test_feats)
+
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train_concat)
+        X_test_scaled = scaler.transform(X_test_concat)
+
+        # L2-regularized Logistic Regression handles high-dimensional concatenated tangent features well
+        clf = LogisticRegression(C=0.1, solver="liblinear", max_iter=1000)
+        clf.fit(X_train_scaled, y_train)
+
+        subject_scores[held_out_subject] = clf.score(X_test_scaled, y_test)
 
     return subject_scores

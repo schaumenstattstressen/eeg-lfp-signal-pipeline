@@ -1,5 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import make_pipeline
 
 def plot_eeg_signal(time, raw_signal, filtered_signal, channel_name="Channel", duration=5.0, fs=160.0):
     """

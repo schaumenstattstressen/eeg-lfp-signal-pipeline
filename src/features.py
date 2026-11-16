@@ -12,6 +12,12 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import make_pipeline
 from sklearn.model_selection import cross_val_score, StratifiedKFold, LeaveOneGroupOut
 from src.preprocessing import fit_ica, apply_ica_cleaning
+from sklearn.preprocessing import StandardScaler
+from pyriemann.estimation import Covariances
+from pyriemann.tangentspace import TangentSpace
+import warnings
+from sklearn.exceptions import ConvergenceWarning
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
 def compute_psd(data, fs=160.0, nperseg=None):
     # nperseg=None -> int(2*fs) = 320 samples (2 seconds of data at 160 Hz) a clean frequency resolution for frequency bands to fall on exacct integer bins
@@ -228,22 +234,29 @@ def evaluate_loso_cross_validation(X, y, groups, n_components=4):
     subject_scores : dict
         Dictionary mapping subject IDs to their accuracy scores.
     """
-    loso = LeaveOneGroupOut()
-    csp = CSP(n_components=n_components, reg=None, log=True, norm_trace=False)
-    clf = make_pipeline(csp, LogisticRegression(solver='liblinear', random_state=42))
+    logo = LeaveOneGroupOut()
+
+    # pipeline: compute covariance -> map to riemannian tangent space -> scale -> classify
+    cov = Covariances(estimator='lwf') #Ledoit-Wolf covariance
+    ts = TangentSpace(metric='riemann')
+    scaler = StandardScaler()
+    clf = LogisticRegression(C=1.0, solver='liblinear')
+
+    pipeline = make_pipeline(cov, ts, scaler, clf)
 
     subject_scores = {}
 
-    for train_idx, test_idx in loso.split(X, y, groups):
+    for train_idx, test_idx in logo.split(X, y, groups=groups):
         X_train, X_test = X[train_idx], X[test_idx]
         y_train, y_test = y[train_idx], y[test_idx]
+
         test_subject = groups[test_idx][0]
 
         # Build and fit the pipeline
-        clf.fit(X_train, y_train)
+        pipeline.fit(X_train, y_train)
 
         # Evaluate on the left-out subject
-        score = clf.score(X_test, y_test)
+        score = pipeline.score(X_test, y_test)
         subject_scores[test_subject] = score
 
     return subject_scores
